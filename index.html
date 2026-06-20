@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="tl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<title>RUTA — Jog Tracker</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.js"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/maplibre-gl/3.6.2/maplibre-gl.css" rel="stylesheet" />
+<style>
+  :root{
+    --asphalt: #14171A;
+    --asphalt-2: #1D2125;
+    --panel: #1A1E22;
+    --line: #2A2F34;
+    --ember: #FF4D2E;
+    --ember-dim: #7A2A1C;
+    --mint: #3DDC9A;
+    --amber: #FFB020;
+    --text: #ECEDEE;
+    --text-dim: #8B9197;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: var(--asphalt);
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: var(--text);
+    overflow: hidden;
+  }
+
+  #map {
+    position: absolute;
+    inset: 0;
+    background: var(--asphalt);
+  }
+  .maplibregl-ctrl-attrib{ font-size:9px !important; opacity:0.6; }
+  .maplibregl-ctrl-bottom-right, .maplibregl-ctrl-bottom-left{ z-index: 50 !important; }
+
+  .vignette{
+    position:absolute; inset:0; pointer-events:none; z-index:401;
+    background: radial-gradient(120% 90% at 50% 30%, transparent 40%, rgba(10,12,14,0.55) 100%);
+  }
+
+  .topbar{
+    position:absolute; top:0; left:0; right:0; z-index:500;
+    padding: max(14px, env(safe-area-inset-top)) 16px 10px;
+    display:flex; align-items:center; justify-content:space-between;
+    background: linear-gradient(to bottom, rgba(10,12,14,0.85), transparent);
+  }
+  .brand{
+    font-weight:800; letter-spacing:2px; font-size:15px;
+    color:var(--text);
+  }
+  .brand span{ color: var(--ember); }
+  .status-pill{
+    display:flex; align-items:center; gap:6px;
+    font-size:11px; letter-spacing: 0.5px; color: var(--text-dim);
+    background: rgba(26,30,34,0.7);
+    border:1px solid var(--line);
+    padding: 5px 10px; border-radius: 100px;
+  }
+  .status-dot{
+    width:7px; height:7px; border-radius:50%;
+    background: var(--text-dim);
+    flex-shrink:0;
+  }
+  .status-dot.live{
+    background: var(--mint);
+    box-shadow: 0 0 0 0 rgba(61,220,154,0.6);
+    animation: pulse-dot 1.6s infinite;
+  }
+  @keyframes pulse-dot{
+    0%{ box-shadow: 0 0 0 0 rgba(61,220,154,0.55);}
+    70%{ box-shadow: 0 0 0 7px rgba(61,220,154,0);}
+    100%{ box-shadow: 0 0 0 0 rgba(61,220,154,0);}
+  }
+  .status-dot.recording{ background: var(--ember); animation: pulse-rec 1.1s infinite; }
+  @keyframes pulse-rec{
+    0%{ box-shadow: 0 0 0 0 rgba(255,77,46,0.6);}
+    70%{ box-shadow: 0 0 0 8px rgba(255,77,46,0);}
+    100%{ box-shadow: 0 0 0 0 rgba(255,77,46,0);}
+  }
+  .status-dot.weak{ background: var(--amber); }
+
+  .gps-meta{
+    font-size: 10px; color: var(--text-dim); margin-left: 4px;
+    border-left: 1px solid var(--line); padding-left:6px;
+  }
+
+  .side-btns{
+    position:absolute; z-index:500;
+    right:14px;
+    bottom: 252px;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  .icon-btn{
+    width:44px; height:44px; border-radius:50%;
+    background: rgba(26,30,34,0.85);
+    border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    color: var(--text);
+  }
+  .icon-btn.active{
+    background: var(--ember);
+    color: #1A0E0A;
+    border-color: var(--ember);
+  }
+  .icon-btn svg{ width:20px; height:20px; }
+
+  .panel{
+    position:absolute; left:0; right:0; bottom:0; z-index:500;
+    background: linear-gradient(180deg, var(--panel) 0%, var(--asphalt) 100%);
+    border-top: 1px solid var(--line);
+    border-radius: 22px 22px 0 0;
+    padding: 14px 18px max(16px, env(safe-area-inset-bottom));
+    box-shadow: 0 -10px 30px rgba(0,0,0,0.45);
+  }
+  .grabber{
+    width:36px; height:4px; border-radius:4px;
+    background: var(--line);
+    margin: 0 auto 14px;
+  }
+
+  .stat-row{
+    display:grid;
+    grid-template-columns: 1.3fr 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .stat{ text-align:center; }
+  .stat.main{ text-align:center; border-right: 1px solid var(--line); }
+  .stat-label{
+    font-size: 10.5px; letter-spacing: 1.5px; color: var(--text-dim);
+    text-transform: uppercase; margin-bottom: 4px; font-weight:600;
+  }
+  .stat-value{
+    font-family: 'Courier New', monospace;
+    font-weight:700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height:1;
+  }
+  .stat.main .stat-value{ font-size: 42px; color: var(--ember); }
+  .stat.main .stat-value sup{ font-size: 16px; margin-left:2px; color: var(--text-dim); font-weight:600;}
+  .stat:not(.main) .stat-value{ font-size: 26px; }
+
+  .controls{ display:flex; gap: 10px; }
+  .btn{
+    flex:1;
+    border:none; border-radius: 14px;
+    padding: 16px 0;
+    font-size: 14px; font-weight:700; letter-spacing: 1px;
+    text-transform: uppercase;
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .btn-start{ background: var(--ember); color: #1A0E0A; }
+  .btn-pause{ background: var(--asphalt-2); color: var(--text); border: 1px solid var(--line); }
+  .btn-stop{ background: transparent; color: var(--text-dim); border: 1px solid var(--line); flex: 0.6; }
+  .btn svg{ width:16px; height:16px; }
+  .btn:active{ transform: scale(0.97); }
+
+  .gps-banner{
+    position:absolute; top:62px; left:50%; transform:translateX(-50%);
+    z-index: 500;
+    background: rgba(26,30,34,0.92);
+    border:1px solid var(--line);
+    padding: 8px 16px; border-radius: 100px;
+    font-size:12px; color: var(--text-dim);
+    display:none;
+    align-items:center; gap:8px;
+    max-width: 88%;
+    text-align:center;
+  }
+  .gps-banner.show{ display:flex; }
+  .spinner{
+    width:13px; height:13px; border-radius:50%;
+    border: 2px solid var(--line);
+    border-top-color: var(--ember);
+    animation: spin 0.8s linear infinite;
+    flex-shrink:0;
+  }
+  @keyframes spin{ to{ transform: rotate(360deg); } }
+
+  .summary-overlay{
+    position:absolute; inset:0; z-index: 700;
+    background: rgba(10,12,14,0.92);
+    display:none;
+    align-items:center; justify-content:center;
+    padding: 24px;
+  }
+  .summary-overlay.show{ display:flex; }
+  .summary-card{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 24px;
+    width: 100%; max-width: 360px;
+    text-align:center;
+  }
+  .summary-card h2{
+    margin:0 0 4px; font-size:13px; letter-spacing:2px; color:var(--text-dim);
+    text-transform:uppercase;
+  }
+  .summary-card .big{
+    font-family:'Courier New', monospace;
+    font-size: 56px; font-weight:800; color: var(--ember);
+    line-height:1; margin: 10px 0 2px;
+  }
+  .summary-card .unit{ color: var(--text-dim); font-size:14px; margin-bottom:20px; }
+  .summary-grid{
+    display:grid; grid-template-columns: 1fr 1fr; gap:14px;
+    margin-bottom: 22px;
+  }
+  .summary-grid .stat-value{ font-size:22px; color:var(--text); }
+  .summary-grid .stat-label{ color:var(--text-dim); }
+  .summary-actions{ display:flex; gap:10px; }
+
+  .you-marker{ position:relative; width:18px; height:18px; }
+  .you-marker .dot{
+    width:14px; height:14px; border-radius:50%;
+    background: var(--ember);
+    border: 2px solid #fff;
+    position:absolute; top:2px; left:2px;
+    animation: pulse-marker 2s infinite;
+  }
+  @keyframes pulse-marker{
+    0%{ box-shadow: 0 0 0 0 rgba(255,77,46,0.55);}
+    70%{ box-shadow: 0 0 0 14px rgba(255,77,46,0);}
+    100%{ box-shadow: 0 0 0 0 rgba(255,77,46,0);}
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="vignette"></div>
+
+<div class="topbar">
+  <div class="brand">RU<span>TA</span></div>
+  <div class="status-pill">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="statusText">Hindi pa naka-GPS</span>
+    <span class="gps-meta" id="gpsMeta" style="display:none;"></span>
+  </div>
+</div>
+
+<div class="gps-banner" id="gpsBanner">
+  <div class="spinner"></div>
+  <span>Hinahanap ang lokasyon mo&hellip;</span>
+</div>
+
+<div class="side-btns">
+  <button class="icon-btn active" id="tilt3dBtn" aria-label="3D view">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l9-4 9 4M3 17V7l9-4 9 4v10M3 7l9 4 9-4"/></svg>
+  </button>
+  <button class="icon-btn" id="recenterBtn" aria-label="I-center sa akin">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div class="panel">
+  <div class="grabber"></div>
+  <div class="stat-row">
+    <div class="stat main">
+      <div class="stat-label">Distansya</div>
+      <div class="stat-value" id="distVal">0.00<sup>km</sup></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Oras</div>
+      <div class="stat-value" id="timeVal">00:00</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Pace /km</div>
+      <div class="stat-value" id="paceVal">&mdash;:&mdash;</div>
+    </div>
+  </div>
+  <div class="controls" id="controlsRow">
+    <button class="btn btn-start" id="startBtn">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+      Simulan
+    </button>
+  </div>
+</div>
+
+<div class="summary-overlay" id="summaryOverlay">
+  <div class="summary-card">
+    <h2>Tapos na ang takbo mo</h2>
+    <div class="big" id="sumDist">0.00</div>
+    <div class="unit">kilometro</div>
+    <div class="summary-grid">
+      <div class="stat">
+        <div class="stat-label">Tagal</div>
+        <div class="stat-value" id="sumTime">00:00</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Average Pace</div>
+        <div class="stat-value" id="sumPace">&mdash;:&mdash;</div>
+      </div>
+    </div>
+    <div class="summary-actions">
+      <button class="btn btn-pause" id="closeSummaryBtn">Sarado</button>
+      <button class="btn btn-start" id="newRunBtn">Bagong Takbo</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const gpsMeta = document.getElementById('gpsMeta');
+  const gpsBanner = document.getElementById('gpsBanner');
+  const distVal = document.getElementById('distVal');
+  const timeVal = document.getElementById('timeVal');
+  const paceVal = document.getElementById('paceVal');
+  const startBtn = document.getElementById('startBtn');
+  const controlsRow = document.getElementById('controlsRow');
+  const recenterBtn = document.getElementById('recenterBtn');
+  const tilt3dBtn = document.getElementById('tilt3dBtn');
+  const summaryOverlay = document.getElementById('summaryOverlay');
+  const sumDist = document.getElementById('sumDist');
+  const sumTime = document.getElementById('sumTime');
+  const sumPace = document.getElementById('sumPace');
+  const closeSummaryBtn = document.getElementById('closeSummaryBtn');
+  const newRunBtn = document.getElementById('newRunBtn');
+
+  let map, mapReady = false;
+  let tracking = false, paused = false;
+  let startTime = null, elapsedBeforePause = 0, timerInterval = null;
+  let totalDistanceKm = 0;
+  let routeCoords = []; // [lng, lat]
+  let lastGoodFix = null; // {lat, lng, t}
+  let followMe = true;
+  let is3D = true;
+
+  // ---------------------------------------------------------------
+  // ACCURACY FILTER CONFIG
+  // Tinutugunan: GPS jitter habang nakatayo, "fake" distance drift.
+  // ---------------------------------------------------------------
+  const MAX_ACCURACY_M = 25;        // ignore fixes na mas malabo pa sa 25m
+  const MIN_MOVE_M = 4;             // huwag idagdag ang galaw kung <4m (jitter floor)
+  const MAX_JUMP_M = 80;            // huwag idagdag kung biglang lumukso >80m sa 1 fix (GPS glitch)
+  const MIN_SPEED_KMH = 1.0;        // kung mas mabagal pa sa paglakad ng pagong, ituring tayo lang
+  const MAX_SPEED_KMH = 28;         // mas mabilis pa sa fast sprint = malamang glitch, i-cap
+
+  function haversineMeters(lat1, lon1, lat2, lon2){
+    const R = 6371000;
+    const dLat = (lat2-lat1) * Math.PI/180;
+    const dLon = (lon2-lon1) * Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function formatTime(totalSeconds){
+    const h = Math.floor(totalSeconds/3600);
+    const m = Math.floor((totalSeconds%3600)/60);
+    const s = Math.floor(totalSeconds%60);
+    if (h > 0) return `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  function currentElapsedSeconds(){
+    if (!startTime) return elapsedBeforePause/1000;
+    return (elapsedBeforePause + (paused ? 0 : (Date.now() - startTime))) / 1000;
+  }
+
+  function updatePaceDisplay(){
+    const secs = currentElapsedSeconds();
+    if (totalDistanceKm < 0.02 || secs < 1){
+      paceVal.innerHTML = '&mdash;:&mdash;';
+      return;
+    }
+    const paceSecPerKm = secs / totalDistanceKm;
+    const m = Math.floor(paceSecPerKm/60);
+    const s = Math.round(paceSecPerKm%60);
+    paceVal.textContent = `${m}:${String(s).padStart(2,'0')}`;
+  }
+
+  function tickTimer(){
+    timeVal.textContent = formatTime(currentElapsedSeconds());
+    updatePaceDisplay();
+  }
+
+  // ---- Map (MapLibre GL, may 3D buildings) ----
+  function initMap(lat, lng){
+    map = new maplibregl.Map({
+      container: 'map',
+      style: 'https://tiles.openfreemap.org/styles/liberty',
+      center: [lng, lat],
+      zoom: 17,
+      pitch: 60,
+      bearing: 0,
+      antialias: true,
+      attributionControl: true
+    });
+
+    map.on('load', () => {
+      mapReady = true;
+
+      const layers = map.getStyle().layers;
+      let labelLayerId;
+      for (const l of layers){
+        if (l.type === 'symbol' && l.layout && l.layout['text-field']){
+          labelLayerId = l.id; break;
+        }
+      }
+      try{
+        map.addLayer({
+          id: '3d-buildings',
+          source: 'openmaptiles',
+          'source-layer': 'building',
+          type: 'fill-extrusion',
+          minzoom: 14,
+          paint: {
+            'fill-extrusion-color': '#2A2F34',
+            'fill-extrusion-height': ['coalesce', ['get', 'render_height'], ['*', ['coalesce', ['get','levels'],3], 3]],
+            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+            'fill-extrusion-opacity': 0.85
+          }
+        }, labelLayerId);
+      } catch(e){ /* style walang openmaptiles source — okay lang, 2D fallback */ }
+
+      map.addSource('route', {
+        type: 'geojson',
+        data: { type: 'Feature', geometry: { type: 'LineString', coordinates: [] } }
+      });
+      map.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route',
+        paint: {
+          'line-color': '#FF4D2E',
+          'line-width': 5,
+          'line-opacity': 0.95
+        },
+        layout: { 'line-cap': 'round', 'line-join': 'round' }
+      });
+
+      const el = document.createElement('div');
+      el.className = 'you-marker';
+      el.innerHTML = '<div class="dot"></div>';
+      window.__youMarker = new maplibregl.Marker({ element: el }).setLngLat([lng, lat]).addTo(map);
+    });
+
+    map.on('dragstart', () => { followMe = false; });
+    map.on('rotatestart', () => { followMe = false; });
+  }
+
+  function updateRouteOnMap(){
+    if (!mapReady || !map.getSource('route')) return;
+    map.getSource('route').setData({
+      type: 'Feature', geometry: { type: 'LineString', coordinates: routeCoords }
+    });
+  }
+
+  function flyToMe(lat, lng){
+    if (!mapReady) return;
+    map.easeTo({
+      center: [lng, lat],
+      pitch: is3D ? 60 : 0,
+      duration: 600
+    });
+  }
+
+  recenterBtn.addEventListener('click', () => {
+    followMe = true;
+    if (lastGoodFix) flyToMe(lastGoodFix.lat, lastGoodFix.lng);
+  });
+
+  tilt3dBtn.addEventListener('click', () => {
+    is3D = !is3D;
+    tilt3dBtn.classList.toggle('active', is3D);
+    if (mapReady){
+      map.easeTo({ pitch: is3D ? 60 : 0, duration: 500 });
+    }
+  });
+
+  // ---- GPS handling with accuracy filtering ----
+  function onPosition(pos){
+    const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+    gpsBanner.classList.remove('show');
+
+    statusDot.classList.remove('weak');
+    if (accuracy > MAX_ACCURACY_M){
+      statusDot.classList.add('weak');
+      statusDot.classList.remove('live');
+      statusText.textContent = 'Mahinang GPS signal';
+    } else {
+      statusDot.classList.add('live');
+      statusText.textContent = tracking ? (paused ? 'Naka-pause' : 'Naka-record') : 'Nakakonekta';
+    }
+    if (tracking && !paused && accuracy <= MAX_ACCURACY_M) statusDot.classList.add('recording');
+    else statusDot.classList.remove('recording');
+
+    gpsMeta.style.display = 'inline';
+    gpsMeta.textContent = `±${Math.round(accuracy)}m`;
+
+    if (!map){
+      initMap(lat, lng);
+    } else if (mapReady){
+      window.__youMarker && window.__youMarker.setLngLat([lng, lat]);
+      if (followMe) flyToMe(lat, lng);
+    }
+
+    // 1. Itapon agad ang fix kung sobrang malabo (>25m accuracy) — pinaka-malaking
+    //    source ng "hindi accurate km" ay ang ginagamit pa rin ang malabong fix.
+    if (accuracy > MAX_ACCURACY_M){
+      return;
+    }
+
+    if (tracking && !paused){
+      const now = Date.now();
+
+      if (lastGoodFix){
+        const distM = haversineMeters(lastGoodFix.lat, lastGoodFix.lng, lat, lng);
+        const dtSec = Math.max((now - lastGoodFix.t) / 1000, 0.1);
+        const impliedSpeedKmh = (distM / 1000) / (dtSec / 3600);
+
+        const passesMinMove = distM >= MIN_MOVE_M;
+        const passesMaxJump = distM <= MAX_JUMP_M;
+        const passesSpeedFloor = impliedSpeedKmh >= MIN_SPEED_KMH;
+        const passesSpeedCeiling = impliedSpeedKmh <= MAX_SPEED_KMH;
+
+        if (passesMinMove && passesMaxJump && passesSpeedFloor && passesSpeedCeiling){
+          totalDistanceKm += distM / 1000;
+          distVal.innerHTML = totalDistanceKm.toFixed(2) + '<sup>km</sup>';
+          routeCoords.push([lng, lat]);
+          updateRouteOnMap();
+          lastGoodFix = { lat, lng, t: now };
+        }
+        // kung hindi pasa sa filter (jitter o glitch), huwag i-update ang lastGoodFix
+        // — manatili itong matatag na reference point
+      } else {
+        routeCoords.push([lng, lat]);
+        updateRouteOnMap();
+        lastGoodFix = { lat, lng, t: now };
+      }
+    } else {
+      lastGoodFix = { lat, lng, t: Date.now() };
+    }
+  }
+
+  function onPositionError(err){
+    gpsBanner.classList.add('show');
+    gpsBanner.querySelector('span').textContent =
+      err.code === 1 ? 'Pakipayagan ang GPS access sa browser settings.' :
+      'Hindi mahanap ang lokasyon. Subukan sa labas, lantad sa langit.';
+    statusDot.classList.remove('live');
+    statusText.textContent = 'GPS error';
+  }
+
+  function startWatching(){
+    if (!('geolocation' in navigator)){
+      gpsBanner.classList.add('show');
+      gpsBanner.querySelector('span').textContent = 'Walang GPS sa browser na ito.';
+      return;
+    }
+    gpsBanner.classList.add('show');
+    navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true,
+      maximumAge: 1000,
+      timeout: 15000
+    });
+  }
+
+  // ---- Controls ----
+  function renderRunningControls(){
+    controlsRow.innerHTML = `
+      <button class="btn btn-pause" id="pauseBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        Pause
+      </button>
+      <button class="btn btn-stop" id="stopBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        Tapos
+      </button>
+    `;
+    document.getElementById('pauseBtn').addEventListener('click', togglePause);
+    document.getElementById('stopBtn').addEventListener('click', stopRun);
+  }
+
+  function renderPausedControls(){
+    controlsRow.innerHTML = `
+      <button class="btn btn-start" id="resumeBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Ituloy
+      </button>
+      <button class="btn btn-stop" id="stopBtn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        Tapos
+      </button>
+    `;
+    document.getElementById('resumeBtn').addEventListener('click', togglePause);
+    document.getElementById('stopBtn').addEventListener('click', stopRun);
+  }
+
+  function startRun(){
+    tracking = true;
+    paused = false;
+    totalDistanceKm = 0;
+    routeCoords = [];
+    updateRouteOnMap();
+    elapsedBeforePause = 0;
+    startTime = Date.now();
+    distVal.innerHTML = '0.00<sup>km</sup>';
+    timeVal.textContent = '00:00';
+    paceVal.innerHTML = '&mdash;:&mdash;';
+    statusDot.classList.add('recording');
+    statusText.textContent = 'Naka-record';
+    followMe = true;
+    lastGoodFix = null;
+
+    timerInterval = setInterval(tickTimer, 1000);
+    renderRunningControls();
+  }
+
+  function togglePause(){
+    if (!paused){
+      paused = true;
+      elapsedBeforePause += Date.now() - startTime;
+      startTime = null;
+      clearInterval(timerInterval);
+      statusText.textContent = 'Naka-pause';
+      statusDot.classList.remove('recording');
+      renderPausedControls();
+    } else {
+      paused = false;
+      startTime = Date.now();
+      lastGoodFix = null; // reset reference para hindi mag-jump ang distance pagkatapos ng pause
+      timerInterval = setInterval(tickTimer, 1000);
+      statusText.textContent = 'Naka-record';
+      statusDot.classList.add('recording');
+      renderRunningControls();
+    }
+  }
+
+  function stopRun(){
+    tracking = false;
+    paused = false;
+    clearInterval(timerInterval);
+    const secs = currentElapsedSeconds();
+
+    sumDist.textContent = totalDistanceKm.toFixed(2);
+    sumTime.textContent = formatTime(secs);
+    if (totalDistanceKm > 0.02 && secs > 1){
+      const paceSecPerKm = secs / totalDistanceKm;
+      const m = Math.floor(paceSecPerKm/60);
+      const s = Math.round(paceSecPerKm%60);
+      sumPace.textContent = `${m}:${String(s).padStart(2,'0')}`;
+    } else {
+      sumPace.innerHTML = '&mdash;:&mdash;';
+    }
+    summaryOverlay.classList.add('show');
+
+    statusDot.classList.remove('recording');
+    statusText.textContent = 'Nakakonekta';
+
+    controlsRow.innerHTML = `
+      <button class="btn btn-start" id="startBtnNew">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Simulan
+      </button>
+    `;
+    document.getElementById('startBtnNew').addEventListener('click', startRun);
+  }
+
+  startBtn.addEventListener('click', startRun);
+  closeSummaryBtn.addEventListener('click', () => summaryOverlay.classList.remove('show'));
+  newRunBtn.addEventListener('click', () => {
+    summaryOverlay.classList.remove('show');
+    startRun();
+  });
+
+  startWatching();
+})();
+</script>
+</body>
+</html>
